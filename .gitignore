@@ -1,0 +1,6 @@
+# Claude Code 本地配置（会话/设置，不入库）
+.claude/
+
+# Python
+__pycache__/
+*.pyc
