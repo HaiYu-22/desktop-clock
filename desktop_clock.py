@@ -6,7 +6,7 @@
 - 表盘面完全透明：只显示表圈、刻度、数字、指针，透过表盘可见桌面
 - 秒针精确到秒（平滑走动，每秒准确落位）
 - 表盘下半部分以数字显示 年月日 与 星期（字号小于表盘数字）
-- 无边框、置顶、可拖动
+- 无边框、可拖动；默认不置顶（可被其他窗口遮挡，遮挡部分不显示，照常走时）
 - 记忆窗口位置：关闭/拖动结束自动保存，下次启动恢复原位
 - 开机自启动：右键菜单勾选"开机自启动"，随系统启动（注册表 HKCU\\...\\Run）
 
@@ -50,8 +50,7 @@ C_NUM = (234, 239, 246, 255)       # 亮白：数字
 C_HOUR = (246, 249, 253, 255)      # 银白：时针
 C_MIN = (240, 244, 250, 255)       # 银白：分针
 C_SEC = (255, 87, 76, 255)         # 珊瑚红：秒针
-C_DATE = (214, 222, 233, 255)      # 冷白：日期
-C_WEEK = (255, 189, 92, 255)       # 琥珀：星期
+C_DATE = (214, 222, 233, 255)      # 冷白：日期 / 星期（两者同色）
 C_CAP = (246, 249, 253, 255)       # 银白：中心帽外圈
 C_CAP_IN = (26, 31, 40, 255)       # 炭黑：中心帽内点
 
@@ -211,7 +210,8 @@ class DesktopClock:
         self.root.title('桌面时钟')
         self.smooth = cfg.get('smooth', True)
         self._drag_origin = None
-        self._top_var = tk.BooleanVar(value=cfg.get('topmost', True))
+        # 默认不置顶：时钟可被其他窗口遮挡（遮挡部分不显示，时钟照常走时）
+        self._top_var = tk.BooleanVar(value=cfg.get('topmost', False))
 
         self.root.overrideredirect(True)
         self.root.attributes('-topmost', self._top_var.get())
@@ -343,7 +343,7 @@ class DesktopClock:
         d.text((cx, (CY + 46) * s_), ds, font=self.font_date,
                fill=C_DATE, anchor='mm')
         d.text((cx, (CY + 63) * s_), ws, font=self.font_week,
-               fill=C_WEEK, anchor='mm')
+               fill=C_DATE, anchor='mm')
 
         # 时针 / 分针（锥形；polygon 描边沿边缘走，尖端不会伸出表圈）
         hp = self._hand_pts(h * 30, 88, 11, 5, 14)
