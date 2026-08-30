@@ -253,8 +253,9 @@ class DesktopClock:
         # 注意：含中文的字体必须用微软雅黑（Segoe UI 无中文字形）
         self.font_num = load_font(19 * SS, 'seguisb.ttf', 'segoeui.ttf',
                                   'msyhbd.ttc', 'msyh.ttc')
-        self.font_date = load_font(12 * SS, 'msyh.ttc', 'segoeui.ttf', 'msyhbd.ttc')
-        self.font_week = load_font(12 * SS, 'msyhbd.ttc', 'msyh.ttc')
+        # 日期与星期同字体同色：微软雅黑加粗（颜色同为 C_DATE）
+        self.font_date = load_font(12 * SS, 'msyhbd.ttc', 'msyh.ttc', 'segoeui.ttf')
+        self.font_week = self.font_date
 
         # —— 预渲染静态表盘（表圈 + 刻度 + 数字）——
         self._base = self._render_base()
