@@ -1,33 +1,32 @@
 @echo off
 rem ============================================
-rem  桌面时钟 启动脚本（Python 版）
-rem  首次运行会自动检测并安装 Pillow 依赖
-rem  已运行则直接启动，无窗口闪烁
+rem  ����ʱ�� �����ű���Python �棩
+rem  �״����л��Զ���Ⲣ��װ Pillow ����
+rem  ��������ֱ���������޴�����˸
 rem ============================================
 cd /d "%~dp0"
-chcp 65001 >nul 2>nul
 
-rem 确定 pythonw（系统 PATH 或用户安装目录）
+rem ȷ�� pythonw��ϵͳ PATH ���û���װĿ¼��
 set "PYW="
 where pythonw >nul 2>nul && set "PYW=pythonw"
 if not defined PYW (
   if exist "%LOCALAPPDATA%\Programs\Python\Python312\pythonw.exe" set "PYW=%LOCALAPPDATA%\Programs\Python\Python312\pythonw.exe"
 )
 if not defined PYW (
-  echo [错误] 未找到 pythonw，请先安装 Python。
+  echo [����] δ�ҵ� pythonw�����Ȱ�װ Python��
   pause
   exit /b 1
 )
 
-rem 检查 Pillow 是否可用（需要 python.exe 运行检测）
+rem ��� Pillow �Ƿ���ã���Ҫ python.exe ���м�⣩
 set "PY=%PYW:pythonw=python%"
 if not exist "%PY%" set "PY=python"
 %PY% -c "import PIL" >nul 2>nul
 if errorlevel 1 (
-  echo 正在安装 Pillow（首次运行需要联网）...
+  echo ���ڰ�װ Pillow���״�������Ҫ������...
   %PY% -m pip install pillow
   if errorlevel 1 (
-    echo [错误] Pillow 安装失败，请检查网络。
+    echo [����] Pillow ��װʧ�ܣ��������硣
     pause
     exit /b 1
   )

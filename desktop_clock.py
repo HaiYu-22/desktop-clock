@@ -7,24 +7,38 @@
 - 秒针精确到秒（平滑走动，每秒准确落位）
 - 表盘下半部分以数字显示 年月日 与 星期（字号小于表盘数字）
 - 无边框、置顶、可拖动
+- 记忆窗口位置：关闭/拖动结束自动保存，下次启动恢复原位
+- 开机自启动：右键菜单勾选"开机自启动"，随系统启动（注册表 HKCU\\...\\Run）
 
 运行方式：python desktop_clock.py
-操作：左键按住拖动；双击切换置顶；右键菜单（置顶 / 秒针模式 / 退出）
+操作：左键按住拖动；双击切换置顶；右键菜单（置顶 / 秒针模式 / 开机自启动 / 退出）
 """
 
 import ctypes
 import datetime
+import json
 import math
 import os
+import sys
 import tkinter as tk
 from ctypes import wintypes as wt
 from PIL import Image, ImageDraw, ImageFont
+
+try:
+    import winreg          # Windows 注册表（自启动用）
+except ImportError:
+    winreg = None
 
 # ============ 配置 ============
 SIZE = 360                 # 窗口边长（逻辑像素）
 CX, CY = SIZE // 2, SIZE // 2
 R = 162                    # 表盘半径
 SS = 3                     # 超采样倍数（抗锯齿）
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_FILE = 'desktop_clock_config.json'   # 记忆窗口位置 / 置顶 / 秒针模式
+RUN_KEY = r'Software\Microsoft\Windows\CurrentVersion\Run'
+RUN_VALUE = '桌面时钟'
 
 # 配色：炭黑描边 + 银白主体 + 琥珀/珊瑚点缀（透明背景上任意底色都清晰）
 C_OUT = (18, 24, 34, 255)          # 炭黑：所有元素的描边 / 光晕
@@ -56,6 +70,80 @@ def _make_dpi_aware():
             ctypes.windll.user32.SetProcessDPIAware()
         except Exception:
             pass
+
+
+# ---------- 配置持久化（窗口位置 / 置顶 / 秒针模式） ----------
+def _config_path():
+    """配置文件路径：优先脚本同目录（便携）；不可写则回退到 %APPDATA%\\DesktopClock。"""
+    p = os.path.join(BASE_DIR, CONFIG_FILE)
+    try:
+        with open(p, 'a'):
+            pass
+        return p
+    except OSError:
+        d = os.path.join(os.environ.get('APPDATA', ''), 'DesktopClock')
+        os.makedirs(d, exist_ok=True)
+        return os.path.join(d, CONFIG_FILE)
+
+
+def load_config():
+    try:
+        with open(_config_path(), 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def save_config(cfg):
+    try:
+        with open(_config_path(), 'w', encoding='utf-8') as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+    except OSError:
+        pass
+
+
+# ---------- 开机自启动（注册表 HKCU\...\Run） ----------
+def _autostart_cmd():
+    """自启动命令行：pythonw + 脚本绝对路径（与工作目录无关，不弹控制台）。"""
+    exe = sys.executable
+    if exe.lower().endswith('python.exe'):
+        alt = exe[:-4] + 'w.exe'     # 同目录通常有 pythonw.exe
+        if os.path.exists(alt):
+            exe = alt
+    return f'"{exe}" "{os.path.join(BASE_DIR, "desktop_clock.py")}"'
+
+
+def autostart_enabled():
+    if winreg is None:
+        return False
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
+            val, _ = winreg.QueryValueEx(k, RUN_VALUE)
+        return val == _autostart_cmd()
+    except OSError:
+        return False
+
+
+def set_autostart(enable):
+    if winreg is None:
+        return
+    try:
+        # 同时要读写：删值需 KEY_SET_VALUE，查值需 KEY_QUERY_VALUE
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0,
+                            winreg.KEY_SET_VALUE | winreg.KEY_QUERY_VALUE) as k:
+            if enable:
+                winreg.SetValueEx(k, RUN_VALUE, 0, winreg.REG_SZ,
+                                  _autostart_cmd())
+            else:
+                # 只删自己写入的项，避免误删用户手动配置的同名项
+                try:
+                    val, _ = winreg.QueryValueEx(k, RUN_VALUE)
+                    if val == _autostart_cmd():
+                        winreg.DeleteValue(k, RUN_VALUE)
+                except OSError:
+                    pass
+    except OSError:
+        pass
 
 
 # ---------- 字体 ----------
@@ -117,18 +205,26 @@ user32.UpdateLayeredWindow.restype = wt.BOOL
 class DesktopClock:
     def __init__(self):
         _make_dpi_aware()
+        cfg = load_config()          # 上次记住的窗口位置 / 置顶 / 秒针模式
+        self._cfg = cfg
         self.root = tk.Tk()
         self.root.title('桌面时钟')
-        self.smooth = True
+        self.smooth = cfg.get('smooth', True)
         self._drag_origin = None
-        self._top_var = tk.BooleanVar(value=True)
+        self._top_var = tk.BooleanVar(value=cfg.get('topmost', True))
 
         self.root.overrideredirect(True)
-        self.root.attributes('-topmost', True)
+        self.root.attributes('-topmost', self._top_var.get())
         self.root.resizable(False, False)
         self.root.configure(bg='#000000')
         sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
-        self.root.geometry(f'{SIZE}x{SIZE}+{(sw - SIZE) // 2}+{(sh - SIZE) // 2}')
+        x, y = cfg.get('x'), cfg.get('y')
+        if isinstance(x, int) and isinstance(y, int):
+            # 恢复上次的窗口位置
+            self.root.geometry(f'{SIZE}x{SIZE}+{x}+{y}')
+        else:
+            # 首次运行：居中显示
+            self.root.geometry(f'{SIZE}x{SIZE}+{(sw - SIZE) // 2}+{(sh - SIZE) // 2}')
         self.root.update()          # 确保窗口已创建，才能取 HWND
 
         # —— 真实顶层句柄 → 设为分层窗口（逐像素透明）——
@@ -164,6 +260,7 @@ class DesktopClock:
         self._base = self._render_base()
 
         # —— 事件 ——
+        self.root.protocol('WM_DELETE_WINDOW', self._on_close)
         self.root.bind('<ButtonPress-1>', self._start_drag)
         self.root.bind('<B1-Motion>', self._on_drag)
         self.root.bind('<ButtonRelease-1>', self._end_drag)
@@ -329,6 +426,9 @@ class DesktopClock:
 
     def _end_drag(self, e):
         self._drag_origin = None
+        # 拖动结束即记住位置：即使之后进程被强制结束，下次也能恢复
+        self._cfg.update(x=self.root.winfo_x(), y=self.root.winfo_y())
+        save_config(self._cfg)
 
     # ---------- 置顶 ----------
     def toggle_top(self):
@@ -348,14 +448,29 @@ class DesktopClock:
         mode.add_radiobutton(label='每秒跳动（经典）', variable=sv, value=False,
                              command=lambda: setattr(self, 'smooth', False))
         menu.add_cascade(label='秒针模式', menu=mode)
+        au = tk.BooleanVar(value=autostart_enabled())
+        menu.add_checkbutton(label='开机自启动', variable=au,
+                             command=lambda: set_autostart(au.get()))
         menu.add_separator()
-        menu.add_command(label='退出', command=self.root.destroy)
+        menu.add_command(label='退出', command=self._on_close)
 
         self._menu = menu
         try:
             menu.tk_popup(e.x_root, e.y_root)
         finally:
             menu.grab_release()
+
+    # ---------- 关闭 ----------
+    def _on_close(self):
+        """退出前保存窗口位置与设置，再销毁窗口。"""
+        self._cfg.update(
+            x=self.root.winfo_x(),
+            y=self.root.winfo_y(),
+            topmost=self._top_var.get(),
+            smooth=self.smooth,
+        )
+        save_config(self._cfg)
+        self.root.destroy()
 
 
 if __name__ == '__main__':

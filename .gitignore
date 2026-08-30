@@ -4,3 +4,6 @@
 # Python
 __pycache__/
 *.pyc
+
+# 运行时生成的用户配置（窗口位置等）
+desktop_clock_config.json

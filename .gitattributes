@@ -1,0 +1,2 @@
+# Windows 批处理必须是 CRLF 行尾，否则 cmd 解析括号块会错乱（曾导致双击闪退）
+*.bat text eol=crlf

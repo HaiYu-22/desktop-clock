@@ -10,6 +10,8 @@
 - 秒针精确到秒（可切换平滑走动 / 每秒跳动）
 - 表盘下半部分以数字显示年月日与星期
 - 无边框、置顶、可拖动
+- **记忆窗口位置**：关闭或拖动结束时自动记住位置，下次启动恢复在相同位置
+- **开机自启动**：右键菜单勾选"开机自启动"，随系统登录自动运行（写入当前用户注册表 Run 键，无需管理员权限）
 
 ## 运行环境
 
@@ -29,10 +31,12 @@ python desktop_clock.py
 
 - 左键按住：拖动位置
 - 双击：切换置顶
-- 右键：菜单（置顶 / 秒针模式 / 退出）
+- 右键：菜单（置顶 / 秒针模式 / 开机自启动 / 退出）
 
 ## 技术说明
 
 - 使用 Win32 `UpdateLayeredWindow` 实现真正的逐像素透明（非透明色抠图）
 - `SetProcessDpiAwareness` 声明 DPI 感知，保证 1:1 渲染不模糊
 - 主文件 `desktop_clock.py`，无第三方 GUI 框架依赖
+- 窗口位置 / 置顶 / 秒针模式保存在脚本同目录 `desktop_clock_config.json`（不可写时自动回退到 `%APPDATA%\DesktopClock`）
+- 开机自启动写入注册表 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`，值为 `pythonw.exe + 脚本绝对路径`，不弹控制台、不依赖工作目录
