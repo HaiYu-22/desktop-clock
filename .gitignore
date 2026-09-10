@@ -7,3 +7,6 @@ __pycache__/
 
 # 运行时生成的用户配置（窗口位置等）
 desktop_clock_config.json
+
+# 运行日志（自启动自检 / 异常记录）
+desktop_clock.log

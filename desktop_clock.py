@@ -19,10 +19,12 @@ import datetime
 import json
 import math
 import os
+import subprocess
 import sys
 import tkinter as tk
 from ctypes import wintypes as wt
 from PIL import Image, ImageDraw, ImageFont
+from tkinter import messagebox
 
 try:
     import winreg          # Windows 注册表（自启动用）
@@ -37,8 +39,12 @@ SS = 3                     # 超采样倍数（抗锯齿）
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = 'desktop_clock_config.json'   # 记忆窗口位置 / 置顶 / 秒针模式
+LOG_FILE = 'desktop_clock.log'              # 自启动等关键事件日志（pythonw 无控制台）
 RUN_KEY = r'Software\Microsoft\Windows\CurrentVersion\Run'
 RUN_VALUE = '桌面时钟'
+STARTUP_LNK_NAME = '桌面时钟.lnk'            # "启动"文件夹里的快捷方式（第二通道）
+AUTOSTART_FLAG = '--autostart'              # 由注册表通道拉起时带上的标记
+STARTUP_LNK_FLAG = '--autostart-startup'    # 由启动文件夹通道拉起时带上的标记
 
 # 配色：炭黑描边 + 银白主体 + 琥珀/珊瑚点缀（透明背景上任意底色都清晰）
 C_OUT = (18, 24, 34, 255)          # 炭黑：所有元素的描边 / 光晕
@@ -101,48 +107,215 @@ def save_config(cfg):
         pass
 
 
-# ---------- 开机自启动（注册表 HKCU\...\Run） ----------
-def _autostart_cmd():
-    """自启动命令行：pythonw + 脚本绝对路径（与工作目录无关，不弹控制台）。"""
-    exe = sys.executable
+def _log(msg):
+    """关键事件写日志：程序用 pythonw 启动时没有控制台，出错只能靠日志留痕。"""
+    try:
+        with open(os.path.join(BASE_DIR, LOG_FILE), 'a', encoding='utf-8') as f:
+            f.write(f'{datetime.datetime.now():%Y-%m-%d %H:%M:%S} {msg}\n')
+    except OSError:
+        pass
+
+
+_INSTANCE_MUTEX = None      # 保持引用：进程存活期间不释放互斥体
+
+
+def _single_instance():
+    """保证同一时间只有一个时钟在跑（自启动有两条通道，避免开出两个窗口）。"""
+    global _INSTANCE_MUTEX
+    try:
+        k32 = ctypes.windll.kernel32
+        k32.CreateMutexW.restype = ctypes.c_void_p
+        k32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
+        _INSTANCE_MUTEX = k32.CreateMutexW(None, False,
+                                           'Local\\DesktopClock_SingleInstance')
+        if not _INSTANCE_MUTEX:
+            return True
+        return k32.GetLastError() != 183        # ERROR_ALREADY_EXISTS
+    except Exception:
+        return True
+
+
+def _log_startup():
+    """记录本次是怎么被拉起来的，方便重启后回看自启动到底有没有生效。"""
+    src = '手动启动'
+    if AUTOSTART_FLAG in sys.argv:
+        src = '注册表自启动'
+    elif STARTUP_LNK_FLAG in sys.argv:
+        src = '启动文件夹自启动'
+    _log(f'启动（{src}，PID={os.getpid()}）')
+
+
+# ---------- 开机自启动（注册表 Run 键 + 启动文件夹快捷方式，双通道） ----------
+def _pythonw():
+    """解释器路径：优先 pythonw.exe（无控制台窗口）。"""
+    exe = sys.executable or 'pythonw.exe'
     if exe.lower().endswith('python.exe'):
         alt = exe[:-4] + 'w.exe'     # 同目录通常有 pythonw.exe
         if os.path.exists(alt):
             exe = alt
-    return f'"{exe}" "{os.path.join(BASE_DIR, "desktop_clock.py")}"'
+    return exe
 
 
-def autostart_enabled():
+def _script_path():
+    return os.path.join(BASE_DIR, 'desktop_clock.py')
+
+
+def _autostart_cmd(flag=AUTOSTART_FLAG):
+    """自启动命令行：pythonw + 脚本绝对路径（与工作目录无关，不弹控制台）。"""
+    return f'"{_pythonw()}" "{_script_path()}" {flag}'
+
+
+def _startup_dir():
+    """当前用户的"启动"文件夹。"""
+    return os.path.join(os.environ.get('APPDATA', ''), 'Microsoft', 'Windows',
+                        'Start Menu', 'Programs', 'Startup')
+
+
+def _startup_lnk():
+    return os.path.join(_startup_dir(), STARTUP_LNK_NAME)
+
+
+def _is_our_entry(val):
+    """判断注册表里的项是不是本程序写的（含搬家 / 换解释器前的旧路径）。"""
+    return isinstance(val, str) and 'desktop_clock.py' in val.lower()
+
+
+def read_autostart_value():
+    """读取注册表现有的自启动值；不存在返回 None。"""
     if winreg is None:
-        return False
+        return None
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
             val, _ = winreg.QueryValueEx(k, RUN_VALUE)
-        return val == _autostart_cmd()
+        return val
     except OSError:
-        return False
+        return None
 
 
-def set_autostart(enable):
+def autostart_enabled():
+    """只要有一条自启动通道是好的就算开启（任一条被外部清理时，状态显示才不会误导）。"""
+    return read_autostart_value() == _autostart_cmd() or startup_lnk_ok()
+
+
+def _set_run_key(enable):
+    """写入 / 删除注册表 Run 键。返回 (是否成功, 错误信息)。"""
     if winreg is None:
-        return
+        return False, '当前 Python 环境不支持注册表操作（缺少 winreg 模块）'
     try:
         # 同时要读写：删值需 KEY_SET_VALUE，查值需 KEY_QUERY_VALUE
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0,
                             winreg.KEY_SET_VALUE | winreg.KEY_QUERY_VALUE) as k:
             if enable:
-                winreg.SetValueEx(k, RUN_VALUE, 0, winreg.REG_SZ,
-                                  _autostart_cmd())
+                cmd = _autostart_cmd()
+                winreg.SetValueEx(k, RUN_VALUE, 0, winreg.REG_SZ, cmd)
+                val, _ = winreg.QueryValueEx(k, RUN_VALUE)   # 回读校验，防止静默失败
+                if val != cmd:
+                    return False, '写入后回读不一致（可能被安全软件拦截）'
             else:
-                # 只删自己写入的项，避免误删用户手动配置的同名项
                 try:
                     val, _ = winreg.QueryValueEx(k, RUN_VALUE)
-                    if val == _autostart_cmd():
-                        winreg.DeleteValue(k, RUN_VALUE)
                 except OSError:
-                    pass
+                    return True, ''            # 本来就没有，视为已关闭
+                # 只删本程序写入的项：包含脚本名的旧路径也算（否则搬家后关不掉）
+                if val == _autostart_cmd() or _is_our_entry(val):
+                    winreg.DeleteValue(k, RUN_VALUE)
+    except OSError as e:
+        return False, str(e)
+    return True, ''
+
+
+def startup_lnk_ok():
+    """判断启动文件夹里的快捷方式是否指向当前脚本。
+
+    直接读 .lnk 文件里的明文路径做粗略判断，避免解析快捷方式格式、也不启动额外进程。
+    """
+    try:
+        with open(_startup_lnk(), 'rb') as f:
+            data = f.read(8192)
     except OSError:
+        return False
+    target = _script_path()
+    for enc in ('utf-16-le', 'mbcs', 'utf-8'):
+        try:
+            if target.encode(enc) in data:
+                return True
+        except (LookupError, UnicodeError):
+            continue
+    return False
+
+
+def create_startup_lnk():
+    """在启动文件夹创建快捷方式（无需管理员权限）。返回 (是否成功, 错误信息)。"""
+    def q(s):
+        return s.replace("'", "''")      # PowerShell 单引号字符串转义
+
+    try:
+        os.makedirs(_startup_dir(), exist_ok=True)
+    except OSError as e:
+        return False, f'无法访问启动文件夹：{e}'
+    ps = (
+        "$w=New-Object -ComObject WScript.Shell;"
+        f"$s=$w.CreateShortcut('{q(_startup_lnk())}');"
+        f"$s.TargetPath='{q(_pythonw())}';"
+        f"$s.Arguments='\"{q(_script_path())}\" {STARTUP_LNK_FLAG}';"
+        f"$s.WorkingDirectory='{q(BASE_DIR)}';"
+        "$s.Save()"
+    )
+    try:
+        r = subprocess.run(['powershell', '-NoProfile', '-NonInteractive',
+                            '-Command', ps],
+                           capture_output=True, text=True,
+                           creationflags=0x08000000)     # CREATE_NO_WINDOW
+    except OSError as e:
+        return False, f'无法调用 PowerShell：{e}'
+    if r.returncode != 0:
+        return False, (r.stderr or '').strip() or '创建快捷方式失败'
+    return True, ''
+
+
+def remove_startup_lnk():
+    try:
+        os.remove(_startup_lnk())
+    except FileNotFoundError:
         pass
+    except OSError as e:
+        return False, str(e)
+    return True, ''
+
+
+def set_autostart(enable):
+    """开启 / 关闭开机自启动。返回 (是否成功, 错误信息)。
+
+    同时维护两条通道：注册表 Run 键 + "启动"文件夹快捷方式。
+    任一条被安全软件清理或改回旧值，另一条仍能把时钟拉起来。
+    """
+    ok_run, err_run = _set_run_key(enable)
+    ok_lnk, err_lnk = create_startup_lnk() if enable else remove_startup_lnk()
+    if ok_run and ok_lnk:
+        return True, ''
+    if ok_run or ok_lnk:
+        msg = f'注册表通道：{err_run or "正常"}；启动文件夹通道：{err_lnk or "正常"}'
+        _log(f'自启动只成功了一部分（{msg}）')
+        return True, msg          # 有一条通道可用就算成功，细节记日志
+    return False, f'注册表：{err_run}；启动文件夹：{err_lnk}'
+
+
+def sync_autostart_on_start():
+    """启动时自愈：任一自启动通道路径过期（项目搬家 / 升级 Python）就修好。
+
+    只在用户开过自启动（注册表项存在）时维护，不会替用户主动开启。
+    """
+    old = read_autostart_value()
+    if old is None:
+        return
+    if old != _autostart_cmd() and _is_our_entry(old):
+        ok, err = _set_run_key(True)
+        _log(f'注册表自启动项已修正为当前路径：{old} -> {_autostart_cmd()}'
+             if ok else f'注册表自启动项修正失败：{err}')
+    if not startup_lnk_ok():
+        ok, err = create_startup_lnk()
+        _log('启动文件夹快捷方式已创建 / 修正' if ok
+             else f'启动文件夹快捷方式创建失败：{err}')
 
 
 # ---------- 字体 ----------
@@ -206,6 +379,7 @@ class DesktopClock:
         _make_dpi_aware()
         cfg = load_config()          # 上次记住的窗口位置 / 置顶 / 秒针模式
         self._cfg = cfg
+        sync_autostart_on_start()    # 项目搬家 / 换 Python 后自动修正自启动路径
         self.root = tk.Tk()
         self.root.title('桌面时钟')
         self.smooth = cfg.get('smooth', True)
@@ -436,6 +610,16 @@ class DesktopClock:
         self._top_var.set(not self._top_var.get())
         self.root.attributes('-topmost', self._top_var.get())
 
+    # ---------- 开机自启动 ----------
+    def _toggle_autostart(self, var):
+        """勾选 / 取消开机自启动；失败时给出可见提示（pythonw 下没有控制台）。"""
+        ok, err = set_autostart(bool(var.get()))
+        if ok:
+            return
+        var.set(not var.get())      # 回滚勾选状态，避免显示与实际不符
+        _log(f'设置开机自启动失败：{err}')
+        messagebox.showerror('桌面时钟', f'开机自启动设置失败：\n{err}')
+
     # ---------- 右键菜单 ----------
     def _show_menu(self, e):
         menu = tk.Menu(self.root, tearoff=0)
@@ -451,7 +635,7 @@ class DesktopClock:
         menu.add_cascade(label='秒针模式', menu=mode)
         au = tk.BooleanVar(value=autostart_enabled())
         menu.add_checkbutton(label='开机自启动', variable=au,
-                             command=lambda: set_autostart(au.get()))
+                             command=lambda: self._toggle_autostart(au))
         menu.add_separator()
         menu.add_command(label='退出', command=self._on_close)
 
@@ -475,4 +659,8 @@ class DesktopClock:
 
 
 if __name__ == '__main__':
+    _log_startup()
+    if not _single_instance():
+        _log('已有实例在运行，本次启动退出')
+        sys.exit(0)
     DesktopClock()

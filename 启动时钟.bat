@@ -1,36 +1,48 @@
 @echo off
+chcp 65001 >nul
 rem ============================================
-rem  ×ÀÃæÊ±ÖÓ Æô¶¯½Å±¾£¨Python °æ£©
-rem  Ê×´ÎÔËĞĞ»á×Ô¶¯¼ì²â²¢°²×° Pillow ÒÀÀµ
-rem  ÒÑÔËĞĞÔòÖ±½ÓÆô¶¯£¬ÎŞ´°¿ÚÉÁË¸
+rem  æ¡Œé¢æ—¶é’Ÿ å¯åŠ¨è„šæœ¬ï¼ˆè‡ªåŠ¨æŸ¥æ‰¾ Pythonï¼‰
+rem  é¦–æ¬¡è¿è¡Œä¼šè‡ªåŠ¨å®‰è£… Pillow ä¾èµ–
+rem  å¼€æœºè‡ªå¯åŠ¨è¯·åœ¨æ—¶é’Ÿçš„å³é”®èœå•é‡Œå‹¾é€‰
 rem ============================================
 cd /d "%~dp0"
 
-rem È·¶¨ pythonw£¨ÏµÍ³ PATH »òÓÃ»§°²×°Ä¿Â¼£©
+rem ---- è‡ªåŠ¨æŸ¥æ‰¾ Pythonï¼špy å¯åŠ¨å™¨ -> PATH -> å¸¸è§å®‰è£…ç›®å½• ----
 set "PYW="
-where pythonw >nul 2>nul && set "PYW=pythonw"
+set "PY="
+
+rem 1) py å¯åŠ¨å™¨ï¼ˆèƒ½è‡ªåŠ¨é€‰åˆ°æœ€æ–°çš„ Python 3ï¼‰
+for /f "delims=" %%i in ('py -3 -c "import sys;print(sys.executable)" 2^>nul') do set "PY=%%i"
+if defined PY set "PYW=%PY:python.exe=pythonw.exe%"
+
+rem 2) PATH é‡Œçš„ pythonw
+if not defined PYW for /f "delims=" %%i in ('where pythonw 2^>nul') do if not defined PYW set "PYW=%%i"
+
+rem 3) ç”¨æˆ·ç›®å½• / Program Files ä¸‹çš„ Python3*ï¼ˆç‰ˆæœ¬å·å¤§çš„ä¼˜å…ˆï¼‰
+if not defined PYW for /f "delims=" %%d in ('dir /b /o-n "%LOCALAPPDATA%\Programs\Python\Python3*" 2^>nul') do if not defined PYW if exist "%LOCALAPPDATA%\Programs\Python\%%d\pythonw.exe" set "PYW=%LOCALAPPDATA%\Programs\Python\%%d\pythonw.exe"
+if not defined PYW for /f "delims=" %%d in ('dir /b /o-n "C:\Program Files\Python3*" 2^>nul') do if not defined PYW if exist "C:\Program Files\%%d\pythonw.exe" set "PYW=C:\Program Files\%%d\pythonw.exe"
+
 if not defined PYW (
-  if exist "%LOCALAPPDATA%\Programs\Python\Python312\pythonw.exe" set "PYW=%LOCALAPPDATA%\Programs\Python\Python312\pythonw.exe"
-)
-if not defined PYW (
-  echo [´íÎó] Î´ÕÒµ½ pythonw£¬ÇëÏÈ°²×° Python¡£
+  echo [é”™è¯¯] æ²¡æœ‰æ‰¾åˆ° Pythonï¼Œè¯·å…ˆå®‰è£… Python 3ã€‚
+  echo        å®‰è£…æ—¶å‹¾é€‰ "Add python.exe to PATH"ï¼Œæˆ–åˆ° python.org ä¸‹è½½å®‰è£…ã€‚
   pause
   exit /b 1
 )
 
-rem ¼ì²é Pillow ÊÇ·ñ¿ÉÓÃ£¨ĞèÒª python.exe ÔËĞĞ¼ì²â£©
-set "PY=%PYW:pythonw=python%"
-if not exist "%PY%" set "PY=python"
-%PY% -c "import PIL" >nul 2>nul
+rem ---- ç”¨åŒç›®å½•çš„ python.exe æ£€æŸ¥å¹¶å®‰è£… Pillow ----
+set "PY=%PYW:pythonw.exe=python.exe%"
+if not exist "%PY%" set "PY=%PYW%"
+
+"%PY%" -c "import PIL" >nul 2>nul
 if errorlevel 1 (
-  echo ÕıÔÚ°²×° Pillow£¨Ê×´ÎÔËĞĞĞèÒªÁªÍø£©...
-  %PY% -m pip install pillow
+  echo æ­£åœ¨å®‰è£… Pillowï¼ˆé¦–æ¬¡è¿è¡Œéœ€è¦è”ç½‘ï¼‰...
+  "%PY%" -m pip install pillow
   if errorlevel 1 (
-    echo [´íÎó] Pillow °²×°Ê§°Ü£¬Çë¼ì²éÍøÂç¡£
+    echo [é”™è¯¯] Pillow å®‰è£…å¤±è´¥ï¼Œè¯·æ£€æŸ¥ç½‘ç»œåé‡è¯•ã€‚
     pause
     exit /b 1
   )
 )
 
-start "" "%PYW%" desktop_clock.py
-exit
+start "" "%PYW%" "%~dp0desktop_clock.py"
+exit /b 0
