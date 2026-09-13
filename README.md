@@ -29,7 +29,7 @@
 python desktop_clock.py
 ```
 
-不想装 Python 的话，到 [Releases](../../releases) 下载打包好的 `桌面时钟.exe`，双击即用。
+不想装 Python 的话，到 [Releases](../../releases) 下载打包好的 `desktop-clock.exe`，双击即用（可自行改名为 `桌面时钟.exe`）。
 
 ### 操作
 
