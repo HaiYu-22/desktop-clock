@@ -37,7 +37,9 @@ CX, CY = SIZE // 2, SIZE // 2
 R = 162                    # 表盘半径
 SS = 3                     # 超采样倍数（抗锯齿）
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+FROZEN = bool(getattr(sys, 'frozen', False))   # PyInstaller 打包后运行时为 True
+# 打包成 exe 后 __file__ 指向临时解包目录，配置 / 日志 / 自启动都得跟着 exe 走
+BASE_DIR = os.path.dirname(os.path.abspath(sys.executable if FROZEN else __file__))
 CONFIG_FILE = 'desktop_clock_config.json'   # 记忆窗口位置 / 置顶 / 秒针模式
 LOG_FILE = 'desktop_clock.log'              # 自启动等关键事件日志（pythonw 无控制台）
 RUN_KEY = r'Software\Microsoft\Windows\CurrentVersion\Run'
@@ -157,11 +159,14 @@ def _pythonw():
 
 
 def _script_path():
-    return os.path.join(BASE_DIR, 'desktop_clock.py')
+    """程序本体路径：源码运行时是 .py，打包后就是 exe 自己。"""
+    return sys.executable if FROZEN else os.path.join(BASE_DIR, 'desktop_clock.py')
 
 
 def _autostart_cmd(flag=AUTOSTART_FLAG):
     """自启动命令行：pythonw + 脚本绝对路径（与工作目录无关，不弹控制台）。"""
+    if FROZEN:
+        return f'"{sys.executable}" {flag}'
     return f'"{_pythonw()}" "{_script_path()}" {flag}'
 
 
@@ -176,8 +181,14 @@ def _startup_lnk():
 
 
 def _is_our_entry(val):
-    """判断注册表里的项是不是本程序写的（含搬家 / 换解释器前的旧路径）。"""
-    return isinstance(val, str) and 'desktop_clock.py' in val.lower()
+    """判断注册表里的项是不是本程序写的。
+
+    搬家、换解释器、源码版与 exe 版互换都会留下旧路径，这些残项都认。
+    """
+    if not isinstance(val, str):
+        return False
+    low = val.lower()
+    return 'desktop_clock.py' in low or '桌面时钟.exe' in low
 
 
 def read_autostart_value():
@@ -253,11 +264,15 @@ def create_startup_lnk():
         os.makedirs(_startup_dir(), exist_ok=True)
     except OSError as e:
         return False, f'无法访问启动文件夹：{e}'
+    if FROZEN:
+        target, args = sys.executable, STARTUP_LNK_FLAG
+    else:
+        target, args = _pythonw(), f'"{_script_path()}" {STARTUP_LNK_FLAG}'
     ps = (
         "$w=New-Object -ComObject WScript.Shell;"
         f"$s=$w.CreateShortcut('{q(_startup_lnk())}');"
-        f"$s.TargetPath='{q(_pythonw())}';"
-        f"$s.Arguments='\"{q(_script_path())}\" {STARTUP_LNK_FLAG}';"
+        f"$s.TargetPath='{q(target)}';"
+        f"$s.Arguments='{q(args)}';"
         f"$s.WorkingDirectory='{q(BASE_DIR)}';"
         "$s.Save()"
     )

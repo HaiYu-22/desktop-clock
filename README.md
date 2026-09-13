@@ -29,20 +29,31 @@
 python desktop_clock.py
 ```
 
+不想装 Python 的话，到 [Releases](../../releases) 下载打包好的 `桌面时钟.exe`，双击即用。
+
 ### 操作
 
 - 左键按住：拖动位置
 - 双击：切换置顶
 - 右键：菜单（置顶 / 秒针模式 / 开机自启动 / 退出）
 
+## 自己打包 exe
+
+双击 `build_exe.bat`（会自动补齐 PyInstaller / Pillow），产物在 `dist\桌面时钟.exe`，单文件、双击即用、可独立分发。
+
 ## 技术说明
 
 - 使用 Win32 `UpdateLayeredWindow` 实现真正的逐像素透明（非透明色抠图）
 - `SetProcessDpiAwareness` 声明 DPI 感知，保证 1:1 渲染不模糊
 - 主文件 `desktop_clock.py`，无第三方 GUI 框架依赖
+- 源码运行与 exe 运行都支持：打包后配置 / 日志 / 自启动路径会自动跟随 exe 所在目录（判断 `sys.frozen`）
 - 窗口位置 / 置顶 / 秒针模式保存在脚本同目录 `desktop_clock_config.json`（不可写时自动回退到 `%APPDATA%\DesktopClock`）
 - 开机自启动写入注册表 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`，值为 `pythonw.exe + 脚本绝对路径`，不弹控制台、不依赖工作目录
 - 同时在"启动"文件夹 `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup` 放一个 `桌面时钟.lnk`。某条通道被安全软件清理或改回旧路径时，另一条仍能拉起时钟；被拉起的一方启动后会自动把另一条修好
 - 启动时自动比对注册表值与当前路径 / 解释器，不一致就静默修正；写入失败会弹窗提示，并记录到脚本同目录 `desktop_clock.log`
 - 每次启动都会往 `desktop_clock.log` 记一行，标明是「注册表自启动 / 启动文件夹自启动 / 手动启动」，重启后可直接确认自启动有没有生效
 - 启动脚本 `启动时钟.bat` 自动查找 Python（py 启动器 → PATH → 常见安装目录），不写死版本号与安装路径
+
+## 许可证
+
+MIT License，详见 [LICENSE](LICENSE)。
